@@ -1,0 +1,286 @@
+---
+title: "Session 4 Exercise: Diagnosing a Wage Regression"
+subtitle: "Quantitative Data Science · Europa-Universität Flensburg"
+author: "Your name here"
+date: "2026-05-21"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-tools: true
+    self-contained: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+::: {.callout-note}
+**Business question:** *What determines hourly wages in the US labour market, and when can we trust a regression-based answer?*
+
+Work through the tasks below in order. For each task, write your R code in the provided chunk and your interpretation directly below it. Aim for complete sentences — imagine you are explaining your findings to a colleague who has not studied econometrics.
+
+You have approximately **50 minutes** for the core tasks.
+:::
+
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+library(broom)
+library(modelsummary)
+library(lmtest)
+library(sandwich)
+library(car)
+library(performance)
+library(see)
+library(patchwork)
+
+cps <- read_csv("data/cps-earnings-2014.csv", show_col_types = FALSE)
+```
+
+The dataset is a cleaned extract from the 2014 US Current Population Survey (CPS), restricted to full-time employed workers (≥ 35 hours/week). Variables:
+
+| Variable | Description |
+|---|---|
+| `wage` | Hourly wage (USD) = weekly earnings / usual weekly hours |
+| `earnwke` | Weekly earnings (USD) — top-coded at $2,884 |
+| `uhours` | Usual hours worked per week |
+| `age` | Age in years (16–64) |
+| `educ` | Educational attainment (CPS grade92 codes: 31 = < grade 1, 46 = doctoral degree) |
+| `female` | 1 = female, 0 = male |
+
+Take two minutes to look at the data before modelling:
+
+```{r}
+glimpse(cps)
+summary(cps[, c("wage", "age", "educ", "female")])
+```
+
+**Question:** Look at the wage distribution. Is it symmetric or skewed? What does this suggest about the appropriate functional form?
+
+*Your answer:*
+
+---
+
+# Task 1 — Functional form {#task-1}
+
+A classic result in labour economics (the "Mincer equation") is that log wages — not wages in levels — tend to follow an approximately linear relationship with education and age.
+
+**1a.** Estimate two specifications and extract residuals with `broom::augment()`:
+
+```{r}
+m_level <- lm(wage       ~ age + educ + female, data = cps)
+m_log   <- lm(log(wage)  ~ age + educ + female, data = cps)
+```
+
+Build a **residuals-vs-fitted plot** for each model. Use `ggplot2` and a loess smoother. What does the smoother tell you about each specification?
+
+```{r}
+# your code
+```
+
+*Your answer:*
+
+**1b.** Run the RESET test on both models. What do you conclude — and what does a significant result tell you (and not tell you)?
+
+```{r}
+# your code — resettest(m_level), resettest(m_log)
+```
+
+*Your answer:*
+
+**1c.** Adopt `m_log` as your working model. Interpret the coefficient on `educ` in one sentence. (Recall: `educ` is the CPS ordinal education code, not years of schooling.)
+
+*Your answer:*
+
+---
+
+# Task 2 — Heteroskedasticity {#task-2}
+
+**2a.** Build a **scale-location plot** for `m_log` manually: plot $\sqrt{|\tilde{e}_i|}$ against fitted values. A flat horizontal band indicates constant variance.
+
+```{r}
+# augment(m_log) |> ggplot(...) + geom_smooth(...)
+```
+
+*Your answer:*
+
+**2b.** Run the Breusch-Pagan test.
+
+```{r}
+# your code — bptest(m_log)
+```
+
+**2c.** Compare `m_log` with classical and HC1 robust standard errors in a `modelsummary()` table.
+
+```{r}
+# modelsummary(list("Classical" = m_log, "HC1 robust" = m_log), vcov = list(...))
+```
+
+**Questions:**
+- Does wage data show heteroskedasticity? What is the economic intuition for why you would expect this?
+- Which coefficients change significance when you switch to robust SEs?
+- Should you always use robust SEs? Write one sentence defending your position.
+
+*Your answer:*
+
+---
+
+# Task 3 — Multicollinearity {#task-3}
+
+**3a.** Compute VIF for `m_log`.
+
+```{r}
+# your code — vif(m_log)
+```
+
+**3b.** Estimate an extended model adding `I(age^2)` (to allow a non-linear age-wage profile) and re-compute VIF.
+
+```{r}
+m_quad <- lm(log(wage) ~ age + I(age^2) + educ + female, data = cps)
+# vif(m_quad)
+```
+
+**Questions:**
+- Are VIF values for `m_log` a concern?
+- `age` and `I(age^2)` will have high VIF in `m_quad`. Is this a problem? Why or why not?
+- Would you use `m_log` or `m_quad` as your working model? Look at the residual plot for both specifications.
+
+```{r}
+# Compare residual plots for m_log and m_quad
+```
+
+*Your answer:*
+
+---
+
+# Task 4 — Influential observations {#task-4}
+
+**4a.** Use `augment()` to build a **leverage vs. standardised residuals plot** with Cook's distance contours. Use the $4/n$ threshold to colour influential observations.
+
+```{r}
+threshold  <- 4 / nrow(cps)
+p_params   <- length(coef(m_log))
+cps_aug    <- augment(m_log)
+
+# Build h_seq for contour curves:
+# h_seq <- seq(1e-5, max(cps_aug$.hat) * 1.05, length.out = 500)
+# contour_df <- tibble(h = h_seq,
+#                      upper =  sqrt(threshold * p_params * (1 - h_seq) / h_seq),
+#                      lower = -sqrt(threshold * p_params * (1 - h_seq) / h_seq))
+# your plot code
+```
+
+**4b.** List the ten most influential workers. What do they have in common?
+
+```{r}
+# cps_aug |> arrange(desc(.cooksd)) |> head(10) |> ...
+```
+
+**4c.** Re-estimate `m_log` excluding influential observations. Does the main conclusion about education and wages change?
+
+```{r}
+# your code
+```
+
+*Your answer:*
+
+---
+
+# Task 5 — Normality and overall fit {#task-5}
+
+**5a.** Build a **Q-Q plot** of the standardised residuals from `m_log`.
+
+```{r}
+# augment(m_log) |> ggplot(aes(sample = .std.resid)) + stat_qq() + stat_qq_line()
+```
+
+**5b.** Run Shapiro-Wilk on a sample of 5,000 residuals.
+
+```{r}
+set.seed(42)
+shapiro.test(sample(resid(m_log), 5000))
+```
+
+**Questions:**
+- Does the Q-Q plot show heavy tails? What might cause non-normality in wage residuals?
+- The Shapiro-Wilk p-value will be very small. Why is this unsurprising and largely irrelevant for inference?
+
+*Your answer:*
+
+**5c.** Compare the posterior predictive check for `m_level` and `m_log`. What does the difference tell you?
+
+```{r}
+p1 <- plot(check_predictions(m_level)) + labs(title = "Level-level")
+p2 <- plot(check_predictions(m_log))   + labs(title = "Log-level")
+p1 + p2
+```
+
+*Your answer:*
+
+---
+
+# Task 6 — Full diagnostic check {#task-6}
+
+Run `performance::check_model()` on `m_log`. Match each panel to the task where you built it manually.
+
+```{r}
+#| fig-height: 7
+performance::check_model(m_log)
+```
+
+Based on all evidence, write **3–4 sentences** summarising the diagnostic findings. What are the main concerns, and how did you address (or would you address) each?
+
+*Your answer:*
+
+---
+
+# Task 7 — Omitted variable bias {#task-7}
+
+**7a.** The dataset contains a `female` indicator. Compare a model without and with it:
+
+```{r}
+m_no_female   <- lm(log(wage) ~ age + educ,          data = cps)
+m_with_female <- lm(log(wage) ~ age + educ + female,  data = cps)
+
+modelsummary(
+  list("Without female" = m_no_female, "With female" = m_with_female),
+  stars    = TRUE,
+  gof_omit = "AIC|BIC|Log|F|RMSE",
+  coef_rename = c("age" = "Age", "educ" = "Education", "female" = "Female")
+)
+```
+
+Does the education coefficient change? In which direction, and why?
+
+*Your answer:*
+
+**7b.** Run `check_model(m_no_female, check = c("linearity", "homogeneity", "qq"))`. Do the residual panels reveal the omission?
+
+```{r}
+# your code
+```
+
+*Your answer:*
+
+**7c.** Name one variable that is missing from `m_with_female` but that likely confounds the education-wage relationship. Use the direction-of-bias rule to predict whether omitting it overstates or understates the education coefficient.
+
+*Your answer:*
+
+---
+
+# Bonus — RESET test and the quadratic age profile {#bonus}
+
+*Complete if you finish the core tasks early.*
+
+Re-run the RESET test on `m_quad` (the model with `age + I(age^2)`). Does the test result improve relative to `m_log`? What does this suggest about the age-wage relationship?
+
+```{r}
+# your code
+```
+
+*Your answer:*
